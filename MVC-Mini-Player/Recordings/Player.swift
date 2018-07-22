@@ -2,28 +2,48 @@ import Foundation
 import AVFoundation
 
 class Player: NSObject, AVAudioPlayerDelegate {
-	private var audioPlayer: AVAudioPlayer
+	private(set) var audioPlayer: AVAudioPlayer!
 	private var timer: Timer?
-	private var update: (TimeInterval?) -> ()
+	private var update: (State) -> ()
 	
-	init?(url: URL, update: @escaping (TimeInterval?) -> ()) {
+	enum PlaybackState {
+		case playing
+		case paused
+		case stopped
+	}
+	
+	enum State {
+		case notLoaded
+		case loaded(playback: PlaybackState, duration: TimeInterval, progress: TimeInterval)
+	}
+	
+	private(set) var state: State = .notLoaded
+	
+	init(url: URL, update: @escaping (State) -> ()) {
+		self.update = update
+		super.init()
+		
 		do {
 			try AVAudioSession.sharedInstance().setCategory(AVAudioSessionCategoryPlayAndRecord)
 			try AVAudioSession.sharedInstance().setActive(true)
 		} catch {
-			return nil
+			update(.notLoaded)
+			return
 		}
 
-		if let player = try? AVAudioPlayer(contentsOf: url) {
-			audioPlayer = player
-			self.update = update
-		} else {
-			return nil
+		guard let player = try? AVAudioPlayer(contentsOf: url) else {
+			update(.notLoaded)
+			return
+			
 		}
-		
-		super.init()
-		
+		audioPlayer = player
+		notify(.stopped)
 		audioPlayer.delegate = self
+	}
+	
+	func notify(_ playbackState: PlaybackState) {
+		state = .loaded(playback: playbackState, duration: audioPlayer.duration, progress: audioPlayer.currentTime)
+		update(state)
 	}
 	
 	func togglePlay() {
@@ -31,38 +51,29 @@ class Player: NSObject, AVAudioPlayerDelegate {
 			audioPlayer.pause()
 			timer?.invalidate()
 			timer = nil
+			notify(.paused)
 		} else {
 			audioPlayer.play()
 			if let t = timer {
 				t.invalidate()
 			}
 			timer = Timer.scheduledTimer(withTimeInterval: 0.05, repeats: true) { [weak self] _ in
-				guard let s = self else { return }
-				s.update(s.audioPlayer.currentTime)
+				self?.notify(.playing)
 			}
+			notify(.playing)
 		}
 	}
 	
 	func setProgress(_ time: TimeInterval) {
 		audioPlayer.currentTime = time
+		guard case let .loaded(playbackState, _, _) = state else { return }
+		notify(playbackState)
 	}
 
 	func audioPlayerDidFinishPlaying(_ pl: AVAudioPlayer, successfully flag: Bool) {
 		timer?.invalidate()
 		timer = nil
-		update(flag ? audioPlayer.currentTime : nil)
-	}
-	
-	var duration: TimeInterval {
-		return audioPlayer.duration
-	}
-	
-	var isPlaying: Bool {
-		return audioPlayer.isPlaying
-	}
-	
-	var isPaused: Bool {
-		return !audioPlayer.isPlaying && audioPlayer.currentTime > 0
+		notify(.stopped)
 	}
 	
 	deinit {

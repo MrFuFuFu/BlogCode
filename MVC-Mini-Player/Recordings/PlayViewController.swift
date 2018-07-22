@@ -4,16 +4,6 @@ import AVFoundation
 final class SharedPlayer {
 	static let shared = SharedPlayer()
 	
-	struct State {
-		var duration: TimeInterval = 0
-		var progress: TimeInterval = 0
-	}
-	
-	var state = State() {
-		didSet {
-			notify()
-		}
-	}
 	var audioPlayer: Player?
 	var recording: Recording? {
 		didSet {
@@ -21,31 +11,30 @@ final class SharedPlayer {
 		}
 	}
 	
+	var isPlaying: Bool {
+		if case .loaded(.playing, _, _) = state {
+			return true
+		}
+		return false
+	}
+	
 	static let notification = Notification.Name(rawValue: "io.objc.SharedPlayerChanged")
 	func notify() {
 		NotificationCenter.default.post(name: SharedPlayer.notification, object: self)
 	}
 	
+	var state: Player.State {
+		return audioPlayer?.state ?? .notLoaded
+	}
+	
 	func updateForChangedRecording() {
 		if let r = recording, let url = r.fileURL {
-			audioPlayer = Player(url: url) { [weak self] time in
-				if let t = time {
-					self?.state.progress = t
-				} else {
-					self?.state = State()
-					self?.recording = nil
-				}
-			}
-			
-			if let ap = audioPlayer {
-				state = State(duration: ap.duration, progress: 0)
-			} else {
-				state = State()
-				recording = nil
+			audioPlayer = Player(url: url) { [weak self] state in
+				self?.notify()
 			}
 		} else {
-			state = State()
 			audioPlayer = nil
+			notify()
 		}
 	}
 }
@@ -59,6 +48,9 @@ class PlayViewController: UIViewController, UITextFieldDelegate, AVAudioPlayerDe
 	@IBOutlet var noRecordingLabel: UILabel!
 	@IBOutlet var activeItemElements: UIView!
 	
+	var sharedPlayer: SharedPlayer {
+		return SharedPlayer.shared
+	}
 	var audioPlayer: Player? {
 		return SharedPlayer.shared.audioPlayer
 	}
@@ -72,7 +64,7 @@ class PlayViewController: UIViewController, UITextFieldDelegate, AVAudioPlayerDe
 		
 		navigationItem.leftBarButtonItem = splitViewController?.displayModeButtonItem
 		navigationItem.leftItemsSupplementBackButton = true
-		updateForChangedRecording()
+		updateDisplay()
 
 		NotificationCenter.default.addObserver(self, selector: #selector(storeChanged(notification:)), name: Store.changedNotification, object: nil)
 		NotificationCenter.default.addObserver(self, selector: #selector(playerChanged(notification:)), name: SharedPlayer.notification, object: nil)
@@ -80,44 +72,33 @@ class PlayViewController: UIViewController, UITextFieldDelegate, AVAudioPlayerDe
 
 	@objc func storeChanged(notification: Notification) {
 		guard let item = notification.object as? Item, item === recording else { return }
-		updateForChangedRecording()
+		updateDisplay()
 	}
 	
 	@objc func playerChanged(notification: Notification) {
-		updateForChangedRecording()
+		updateDisplay()
 	}
 	
-	func updateForChangedRecording() {
-		if let r = recording{
-			updateProgressDisplays(progress: SharedPlayer.shared.state.progress, duration: SharedPlayer.shared.state.duration)
+	func updateDisplay() {
+		updateControls()
+		if let r = sharedPlayer.recording {
 			title = r.name
 			nameTextField?.text = r.name
 			activeItemElements?.isHidden = false
 			noRecordingLabel?.isHidden = true
 		} else {
-			updateProgressDisplays(progress: 0, duration: 0)
 			title = ""
 			activeItemElements?.isHidden = true
 			noRecordingLabel?.isHidden = false
 		}
 	}
 	
-	func updateProgressDisplays(progress: TimeInterval, duration: TimeInterval) {
-		progressLabel?.text = timeString(progress)
-		durationLabel?.text = timeString(duration)
-		progressSlider?.maximumValue = Float(duration)
-		progressSlider?.value = Float(progress)
-		updatePlayButton()
-	}
-	
-	func updatePlayButton() {
-		if audioPlayer?.isPlaying == true {
-			playButton?.setTitle(.pause, for: .normal)
-		} else if audioPlayer?.isPaused == true {
-			playButton?.setTitle(.resume, for: .normal)
-		} else {
-			playButton?.setTitle(.play, for: .normal)
-		}
+	func updateControls() {
+		progressLabel?.text = timeString(sharedPlayer.state.progress)
+		durationLabel?.text = timeString(sharedPlayer.state.duration)
+		progressSlider?.maximumValue = Float(sharedPlayer.state.duration)
+		progressSlider?.value = Float(sharedPlayer.state.progress)
+		playButton.setTitle(sharedPlayer.state.buttonTitle, for: .normal)
 	}
 	
 	func textFieldDidEndEditing(_ textField: UITextField) {
@@ -139,7 +120,6 @@ class PlayViewController: UIViewController, UITextFieldDelegate, AVAudioPlayerDe
 	
 	@IBAction func play() {
 		audioPlayer?.togglePlay()
-		updatePlayButton()
 	}
 	
 	// MARK: UIStateRestoring
@@ -153,6 +133,34 @@ class PlayViewController: UIViewController, UITextFieldDelegate, AVAudioPlayerDe
 		super.decodeRestorableState(with: coder)
 		if let uuidPath = coder.decodeObject(forKey: .uuidPathKey) as? [UUID], let recording = Store.shared.item(atUUIDPath: uuidPath) as? Recording {
 			self.recording = recording
+		}
+	}
+}
+
+fileprivate extension Player.State {
+	var progress: TimeInterval {
+		switch self {
+		case .notLoaded: return 0
+		case let .loaded(_, _, p): return p
+		}
+	}
+	
+	var duration: TimeInterval {
+		switch self {
+		case .notLoaded: return 0
+		case let .loaded(_, d, _): return d
+		}
+	}
+	
+	var buttonTitle: String {
+		switch self {
+		case .notLoaded: return ""
+		case let .loaded(playback, _, _):
+			switch playback {
+			case .stopped: return .play
+			case .playing: return .pause
+			case .paused: return .resume
+			}
 		}
 	}
 }

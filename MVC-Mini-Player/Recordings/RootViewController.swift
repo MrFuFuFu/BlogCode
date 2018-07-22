@@ -30,6 +30,10 @@ final class RootViewController: UIViewController, UISplitViewControllerDelegate 
 		}
 	}
 	
+	@IBAction func unwindFromPlayer(segue: UIStoryboardSegue) {
+		miniPlayerVisible = SharedPlayer.shared.isPlaying
+	}
+	
 	func splitViewController(_ splitViewController: UISplitViewController, collapseSecondary secondaryViewController: UIViewController, onto primaryViewController: UIViewController) -> Bool {
 		guard let topAsDetailController = (secondaryViewController as? UINavigationController)?.topViewController as? PlayViewController else { return false }
 		if topAsDetailController.recording == nil {
@@ -37,10 +41,5 @@ final class RootViewController: UIViewController, UISplitViewControllerDelegate 
 			return true
 		}
 		return false
-	}
-	
-	@IBAction func unwindFromPlayer(segue: UIStoryboardSegue) {
-		let isPlaying = SharedPlayer.shared.audioPlayer?.isPlaying == true
-		miniPlayerVisible = isPlaying
 	}
 }
